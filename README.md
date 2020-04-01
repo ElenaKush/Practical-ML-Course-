@@ -16,4 +16,5 @@ throwing the hips to the front (class E).
 
 In the project we explored data, preprocessed it for modelling, chose an appropriate validation strategy, built several models and evaluated their quality.
 
-S. the project write up in the Prediction.html. 
+S. the Project Write Up on the https://elenakush.github.io/Practical-ML-Course-/Prediction.html. 
+S. the detailed EDA for the Assignment on the https://elenakush.github.io/Practical-ML-Course-/EDA.html
