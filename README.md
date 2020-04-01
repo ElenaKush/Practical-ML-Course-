@@ -1,5 +1,12 @@
 # Practical-ML-Course
 
+Project Write Up - https://elenakush.github.io/Practical-ML-Course-/Prediction.html. 
+
+Detailed EDA for the Assignment on the https://elenakush.github.io/Practical-ML-Course-/EDA.html
+
+Repo on GitHub with .Rmd files - https://github.com/ElenaKush/Practical-ML-Course-
+
+
 In this project, our goal was to predict the manner in which 6 people did the barbell lifts.
 
 We used data from accelerometers on the belt, forearm, arm, and dumbell of 6 people, who were asked to perform barbell lifts in 5 different fashions:
@@ -16,5 +23,4 @@ throwing the hips to the front (class E).
 
 In the project we explored data, preprocessed it for modelling, chose an appropriate validation strategy, built several models and evaluated their quality.
 
-S. the Project Write Up on the https://elenakush.github.io/Practical-ML-Course-/Prediction.html. 
-S. the detailed EDA for the Assignment on the https://elenakush.github.io/Practical-ML-Course-/EDA.html
+
