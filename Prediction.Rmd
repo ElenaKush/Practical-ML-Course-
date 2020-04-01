@@ -1,0 +1,356 @@
+---
+title: "Practical Machine Learning Course - Prediction Assignment Writeup"
+author: "ElenaKush"
+date: 'April 01, 2020'
+output: 
+  html_document: 
+    fig_caption: yes
+    fig_height: 7
+    keep_tex: yes
+---
+```{r setup, include = FALSE}
+knitr::opts_chunk$set(echo = TRUE, comment = NA)
+```
+
+## Executive summary
+
+In this project, our goal was to predict the manner in which 6 people did the barbell lifts. 
+
+We used data from accelerometers on the belt, forearm, arm, and dumbell of 6 people, who were asked to perform barbell lifts in 5 different fashions: 
+
+* exactly according to the specification (class A),
+
+* throwing the elbows to the front (class B), 
+
+* lifting the dumbbell only halfway (class C), 
+
+* lowering the dumbbell only halfway (class D) 
+
+* throwing the hips to the front (class E). 
+
+In the project we explored data, preprocessed it for modelling, chose an appropriate validation strategy, built several models and evaluated their quality.  
+
+SUMMARY:
+
+1. There were a few variables that are considered as a leakage. We excluded them to get more reliable result.
+
+2. 5 fold cross validation (CV) was choosen as the best validation strategy. In order to double check the model quality we sliced train_set into 3 parts (80% for training using CV, 10% for tuning hyperparametes, 10% for validaton to check the overfitting). 
+
+3. We applied classification tree and random forest algorithms as well known approaches for multiclass classification task.
+
+4. The random forest showed the better quality comparing to classification tree. 
+
+5. The feature importance for random forest model showed that 5 best predictors were roll_belt, roll_forearm, magnet_dumbbell_y, yaw_belt and magnet_dumbbell_z. All features have similar importance measure which tells there is no leakage in the data.
+
+6. For the random forest model the expected out of sample error was around 0.003 on training set. Similar error we got on test, dev and valid sets which testifies that the model is stable and robust. So, we chose the appropriate model type and validation strategy.
+
+
+## Environment settings
+
+We loaded the following libraries: caret, dplyr, tidyr, lubridate, reshape2, ggplot2, plotly, ranger and rpart.plot.
+```{r environment, include = FALSE}
+if("pacman" %in% rownames(installed.packages()) == FALSE){ install.packages("pacman") }
+library(pacman)
+p_load(caret,
+       dplyr,
+       tidyr,
+       lubridate,
+       reshape2,
+       ggplot2, 
+       plotly,
+       ranger,
+       rpart.plot)
+```
+
+## Data Loading
+
+We loaded data form the following sources:
+
+* train_set - https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv
+
+* test_set - https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv
+
+```{r dataset, include = FALSE}
+local_path <- "C:/Users/kushnarevaei/Documents/GitHub/JH_R_Course/Course8/Week4/project8/"
+
+##download.file("https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv",
+              ##destfile = "data/train_set.csv")
+##download.file("https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv",
+              ##destfile = "data/test_set.csv")
+
+train_set <- read.csv(paste0(local_path,"data/train_set.csv"))
+test_set <- read.csv(paste0(local_path,"data/test_set.csv"))
+```
+
+## EDA 
+
+```{r dataset dim, include = TRUE}
+rbind(train_set = dim(train_set), test_set = dim(test_set))
+```
+
+Both training and test sets have 160 variables. In the test set there are only 20 observation, in the train set about 20K observations though. 
+
+There are the following types of variables:
+
+* X - number of observation (row);  
+* user_name (6 people, who were asked to perform barbell lifts);  
+* raw data from accelerometers on the belt, forearm, arm, and dumbell;  
+* aggerated data from accelerometers;  
+* timestamp (when the exercise was being performed);  
+* classe (target variable - the fashion in that the exercise was performed);  
+* number of window.  
+
+Our target variable is a factor with 5 classes. So, we need to solve a multiclass classification problem. 
+
+
+We need to figure out how balanced our dataset is. So, we can choose an appropriate model type, validation strategy and train_set preprocess procedures.
+
+```{r dist of target, include = TRUE}
+ggplot(data = train_set, aes(x = classe, fill = user_name)) +
+    geom_bar(aes(y = ..count../sum(..count..))) +
+    labs(title = "Figure 1", 
+         subtitle = "Target distribution on train_set")
+```
+
+The target variable can be considered as a balanced one. There is no need to generate new data to get a more balanced dataset.
+
+
+Let's check how the observations are sorted in the train_set.
+
+```{r sorting by classe, include = TRUE}
+ggplot(data = train_set, aes(x = X, y = classe, color = classe)) + ## by classe
+  geom_point() +
+    labs(title = "Figure 2", 
+         subtitle = "Sorting by 'classe' variable")
+```
+
+The observations are clearly sorted by a target. For the training there is a need to exclude the X variable which indicates the number of observation (row). 
+
+
+Let's check the observation sorting by timestamp and user_name.
+
+```{r sorting by time and user, include = TRUE}
+ggplot(data = train_set, aes(x = X, y = cvtd_timestamp, color = classe)) + ## by cvtd_timestamp
+  geom_point(alpha = 0.5, size = 0.8) +
+    facet_grid(. ~ user_name) +
+    theme(axis.text.x = element_text(angle = 90, hjust = 1)) +
+    labs(title = "Figure 3", 
+         subtitle = "Sorting by by time and user")
+```
+  
+Each user was performing the exercises in the same order (A -> B -> C -> D -> E).
+
+Each user performed the exercises in his own period of time, so the timestamps for different users do not overlap each other.
+
+These two findings indicate the way of dataset preparation and can lead to leakage in predictions. So, there is a need to exclude timestamp for fair modelling purposes.
+
+
+Let's check whether the target variable can be changed within one window.
+
+```{r window, include = TRUE}
+## We will make a pivot table with num_window in rows, classe in columns and number of observations in each num_window - classe combination
+spread_df <- train_set %>%
+  count(classe, num_window) %>% 
+  spread(classe, n, fill = 0)   
+
+spread_df$sum <- rowSums(spread_df[, -1])  ## count sum in each row (total observations per window)
+
+## Hypothetically, if there is only one class within the window, in one column should be value which equals total observations per window, in others - zeros.
+## We will find a diffeence between total observations per window and number of observations in the 1st class (1st colums).
+## If there is a difference (!=0) we move to the 2nd class and so on.  
+spread_df$dif <- 0
+for(i in 1:nrow(spread_df)) {
+    if (spread_df[i, 2] != 0) {
+      spread_df$dif[i] <- spread_df[i, 2] - spread_df[i, 7]
+      } else if (spread_df[i, 3] != 0) {
+          spread_df$dif[i] <- spread_df[i, 3] - spread_df[i, 7]
+          } else if (spread_df[i, 4] != 0) {
+              spread_df$dif[i] <- spread_df[i, 4] - spread_df[i, 7]
+          } else if (spread_df[i, 5] != 0) {
+              spread_df$dif[i] <- spread_df[i, 5] - spread_df[i, 7]
+          } else if (spread_df[i, 6] != 0) {
+              spread_df$dif[i] <- spread_df[i, 6] - spread_df[i, 7]
+                      } else {
+                          spread_df$dif <- NULL
+                      }
+}
+
+## We will find the min and max in difference
+summary(unlist(spread_df$dif))
+```
+
+We prooved that only one class is observed within one window. It means if one observation from the window is used for testing and all other observations from the same window are used for the training, the variable num_window should be a good predictor. Knowing this variable is unfair, so we should exclude num_window variable.
+
+
+Let's check the structure of train_set.
+
+```{r dataset str, include = TRUE, eval = FALSE}
+str(train_set) ## many numeric variable are in fact factors
+summary(train_set) ## many factors contain a lot of gaps and errors like #DIV/0
+```
+
+Most of aggregates (max, min, avg, std, etc.) are recorded as factors, although they should be numeric. They contain a lot of gaps and errors like #DIV/0. It may affect the model quality. SO, we would rather exclude aggregates because most sophisticated models such as decision trees or random forest do not need them.
+
+*You can find the full EDA in the file EDA.html*.
+
+## Data Preparation
+
+To avoid a leakage, we have to exclude:
+
+* the X variable that indicates a row number;  
+
+* the raw_timestamp variables that indicates a date/time of exercise;
+
+* num_window variable that can lead to unfair prediction.
+
+We exclude as well all aggregates as the sophisticated prediction approaches (such as random forest and decision tree) do not require the special data preparation (s. https://towardsdatascience.com/comparative-study-on-classic-machine-learning-algorithms-24f9ff6ab222).
+
+We prepared both train_set and test_set the same way. 
+
+```{r preparation, include = TRUE}
+trunc_train_set <- train_set[, c(2, 6, 8:11, 37:49, 60:68, 84:86, 102, 113:124, 140, 151:160)]
+dim(trunc_train_set)
+trunc_test_set <- test_set[, c(2, 6, 8:11, 37:49, 60:68, 84:86, 102, 113:124, 140, 151:160)]
+dim(trunc_test_set)
+```
+
+## Validation strategy
+
+We will randomly pick observations from train_set and hold them out for the validation. But we will leave the same proportion of classes in all sets.
+
+The function createDataPartition can be used to create balanced splits of the data. If the target is a factor (as in our case), the random sampling occurs within each class and should preserve the overall class distribution of the data (s. https://topepo.github.io/caret/data-splitting.html#simple-splitting-based-on-the-outcome).  
+
+We will train our model on 80% of train_set. The rest we will equally divide into dev_set (10%) and valid_set (10%). The dev_set we will use to tune hyperparameters. The valid_set we will use to check whether the model has no overfitting.
+
+```{r slicing, include = TRUE}
+set.seed(12345)
+trainIndex <- createDataPartition(trunc_train_set$classe, p = .8, list = FALSE)
+my_train_set <- trunc_train_set[trainIndex, ]
+set.seed(12345)
+devIndex <- createDataPartition(trunc_train_set[-trainIndex, 55], p = .5, list = FALSE)
+my_dev_set <- trunc_train_set[-trainIndex, ][devIndex, ]
+my_valid_set <- trunc_train_set[-trainIndex, ][-devIndex, ]
+```
+
+Moreover, we will use k-fold cross validation to get more robust results, while training our model. My_train_set will be divided into 5 subsets, and the holdout method is repeated 5 times. Each time, one of the 5 subsets is used for testing and the other 4 subsets are put together to form a training set. Then the average error across 5 trials is computed. The advantage of this method is that it matters less how the data gets divided. Every data point gets to be in a test set exactly once, and gets to be in a training set 4 times. The variance of the resulting estimate is reduced as number of trials is bigger (https://www.cs.cmu.edu/~schneide/tut5/node42.html).
+
+We will save CV parameters:
+
+```{r cv, include = TRUE}
+control <- trainControl(method = "cv", number = 5)
+```
+
+## Prediction
+
+We have a multiclass prediction issue.  
+For this task, the appropriate model type will be tree-based algorithms or Neural Networks.
+(https://stats.stackexchange.com/questions/318520/many-binary-classifiers-vs-single-multiclass-classifier, https://www.cs.utah.edu/~piyush/teaching/aly05multiclass.pdf).  
+Let's try a decision (classification) tree first and then a random forest as a collection of many decision trees.  
+
+```{r decision tree, include = TRUE}
+set.seed(12345)
+system.time(dtree_fit <- train(classe ~ ., data = my_train_set, method = "rpart",
+                   parms = list(split = "information"),
+                   trControl = control))
+
+dtree_fit
+```
+
+The expected OOB error for classification tree is `r 1 - dtree_fit$results[1, 2]`.  
+The accuracy on the train set is `r dtree_fit$results[1, 2]`.  
+
+```{r decision tree importance, include = TRUE}
+rpart.plot(dtree_fit$finalModel,
+           main = "Figure 4, Classification tree")
+```
+
+The following predictors were used as relevan ones: Roll_bell, Pitch_forearm, roll_forearm, magnet_dumbbell_y.  
+
+Let's predict classes on a my_dev_set and my_valid_set using classification tree model.
+
+```{r decision tree prediction dev, include = TRUE}
+dtree_dev_pred <- predict(dtree_fit, my_dev_set[, -55])
+confusionMatrix(dtree_dev_pred, my_dev_set[, 55])
+confusionMatrix(dtree_dev_pred, my_dev_set[, 55])
+```
+
+Accuracy on my_dev_set is `r confusionMatrix(dtree_dev_pred, my_dev_set[, 55])$overall[1]`.  
+
+```{r decision tree prediction valid, include = TRUE}
+dtree_valid_pred <- predict(dtree_fit, my_valid_set[, -55])
+confusionMatrix(dtree_valid_pred, my_valid_set[, 55])
+```
+
+Accuracy on my_valid_set is `r confusionMatrix(dtree_valid_pred, my_valid_set[, 55])$overall[1]`.  
+
+Similar accuracy on the dev and valid sets (`r confusionMatrix(dtree_dev_pred, my_dev_set[, 55])$overall[1]` vs. `r confusionMatrix(dtree_valid_pred, my_valid_set[, 55])$overall[1]`) proves the fact there is no overfitting in the classification tree model.  
+
+
+Let's try a random forest algo.  
+We will use ranger method to speed up the training. We chose this method due to the following facts:  
+* the rf method is slow;  
+* due to cross validation the random forest algorithm has to be rerun from scratch 5 times which means it takes 5 times as much computation to make an evaluation;  
+* the ranger method is faster then rf.  
+
+```{r ranger, include = TRUE}
+set.seed(12345)
+system.time(rf_fit <- train(classe ~ ., data = my_train_set, method = 'ranger', 
+                            importance = "permutation", 
+                            trControl = control))
+```
+```{r ranger fit, include = TRUE}
+rf_fit
+rf_fit$finalModel
+```
+
+The expected OOB error for random forest is `r rf_fit$finalModel$prediction.error`.  
+The accuracy on the train set is `r rf_fit$results[6, 4]`.
+
+```{r ranger importance, include = TRUE}
+varImp(rf_fit)
+```
+
+  
+The following predictors were used as relevan ones: magnet_dumbbell_z, pitch_forearm, roll_forearm, yaw_belt, roll_belt. They have similar importance measure which tells there is no leakage in the data.
+
+Let's predict classes on a my_dev_set and my_valid_set using random forest model.
+
+```{r ranger prediction dev, include = TRUE}
+rf_dev_pred <- predict(rf_fit, my_dev_set[, -55])
+confusionMatrix(rf_dev_pred, my_dev_set[, 55])
+```
+
+The Accuracy on my_dev_set is `r confusionMatrix(rf_dev_pred, my_dev_set[, 55])$overall[1]`.
+
+```{r ranger prediction valid, include = TRUE}
+rf_valid_pred <- predict(rf_fit, my_valid_set[, -55])
+confusionMatrix(rf_valid_pred, my_valid_set[, 55])
+```
+
+The Accuracy on my_valid_set is `r confusionMatrix(rf_valid_pred, my_valid_set[, 55])$overall[1]`.
+
+Similar accuracy on the dev and valid sets (`r confusionMatrix(rf_dev_pred, my_dev_set[, 55])$overall[1]` vs. `r confusionMatrix(rf_valid_pred, my_valid_set[, 55])$overall[1]`) proves the fact there is no overfitting in the random forest model.
+
+The random forest model has significantly better quality than the classification tree model (the OOB error is smaller).  
+
+OOB error for:  
+* classification tree = `r 1 - dtree_fit$results[1, 2]`;  
+* random forest = `r rf_fit$finalModel$prediction.error`.
+
+
+The validation on the dev and valid sets confirmed that as well.
+
+## Predictions on the test set
+
+For the predictions on the 'hidden' test set we will use the random forest model: 
+
+```{r ranger prediction test, include = TRUE}
+rf_test_pred <- predict(rf_fit, trunc_test_set)
+trunc_test_set %>%
+    select(problem_id) %>%
+    mutate(pred_class = rf_test_pred)
+```
+
+## Take care, stay home, stay safe.
+
+*Word count via wordcountaddin:::text_stats() - 1435 (koRpus), 1405 (stringi)*

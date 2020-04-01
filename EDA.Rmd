@@ -1,0 +1,305 @@
+---
+title: "EDA before Prediction"
+author: "ElenaKush"
+date: "March 29, 2020"
+output:
+  html_document:
+    fig_caption: yes
+  pdf_document: default
+---
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, comment = NA)
+```
+
+## Executive summary
+
+One thing that people regularly do is quantify how much of a particular activity they do, but they rarely quantify how well they do it. In this project, our goal was to predict the manner in which 6 people did the barbell lifts. We used data from accelerometers on the belt, forearm, arm, and dumbell of 6 people, who were asked to perform barbell lifts in 5 different fashions: 
+
+exactly according to the specification (class A),
+
+throwing the elbows to the front (class B), 
+
+lifting the dumbbell only halfway (class C), 
+
+lowering the dumbbell only halfway (class D) 
+
+throwing the hips to the front (class E). 
+
+
+In this part we will  perform a deep explorative data analysis in order to understand the nature of data. 
+
+SUMMARY:
+
+1. Both training and test sets have 160 variables.
+
+2. Many numeric variable are assign to factors which may affect the model quality.
+
+3. The aggregates are placed at the end of the window, in the rows where new_window == 'yes'. Most of aggregates are factors. Aggregates can be excluded for sophisticated models, such as decision trees or random forest. 
+
+4. The observations in a training set are clearly sorted by a target variable. For the training there is a need to exclude the X variable which indicates the number of observation (row in the dataset).
+
+5. Each user was performing the exercises in the same order (A -> B -> C -> D -> E).
+
+6. Each user performed the exercises in a very short period of time, so the timestamps for different users do not overlap each other.
+
+7. These two findings (s. 5, 6) show the way of dataset preparation and can lead to leakage in predictions. So, it might be nessecary to exclude timestamp for the fair training purposes.
+
+8. Within one window there can be observed only one class. So it means, if one observation from the window is used for testing and all other observations from the same window are used for the training, the variable num_window should be a good predictor. For the fair validation strategy, we have to place to a test set all observations from one or several windows, so there will be no leakage. 
+
+9. For the project purposes (s. 8), we inspected the distribution of num_window in the 'hidden' test set and checked whether the observations in it are picked from one window and this window is excluded from the train set. We figured out that in the test set, each observation corresponds to a unique window. And all other observations from this window are included into a training set. So, the proposed validation strategy can not be considered as a fair one. But we need to follow it for the project purposes.  
+
+10. For the project purposes, we need to simulate similar validation strategy. So, we refuse from the fair strategy and will randomly pick observations for my_test_set.
+
+11. The target variable can be considered as a balanced one. There is no need to generate new data to get a more balanced dataset.
+
+## Environment settings
+```{r environment, include = TRUE}
+if("pacman" %in% rownames(installed.packages()) == FALSE){ install.packages("pacman") }
+library(pacman)
+p_load(caret,
+       dplyr,
+       tidyr,
+       lubridate,
+       reshape2,
+       ggplot2, 
+       plotly,
+       ranger)
+```
+
+## Data Loading
+
+```{r dataset, include = TRUE}
+local_path <- "C:/Users/kushnarevaei/Documents/GitHub/JH_R_Course/Course8/Week4/project8/"
+
+download.file("https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv",
+              destfile = "data/train_set.csv")
+download.file("https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv",
+              destfile = "data/test_set.csv")
+
+train_set <- read.csv(paste0(local_path,"data/train_set.csv"))
+test_set <- read.csv(paste0(local_path,"data/test_set.csv"))
+```
+
+## Dataset structure
+
+```{r dataset str, include = TRUE}
+dim(train_set)
+dim(test_set)
+str(train_set) ## many numeric variable are in fact factors which may affect the model quality
+class(train_set$kurtosis_picth_belt) ## the numeric variables have factor class instead of numeric
+summary(train_set)
+```
+
+SUMMARY: 
+
+1. Both training and test sets have 160 variables.
+
+2. Many numeric variable are assign to factors which may affect the model quality.
+
+
+Let's check that the dataset structures are identical in the training and testing sets.
+```{r dataset comparison, include = TRUE}
+cl <- NULL
+for (i in names(train_set)) {
+    cl <- rbind(cl, class(train_set$i) == class(test_set$i))
+}
+sum(cl)
+
+names(train_set) == names(test_set)
+names(train_set[160])
+names(test_set[160])
+```
+
+SUMMARY:
+
+1. The classes of variables are identical.
+
+2. The only variable name does not correspond - a target varable 'classe'.
+
+## Variable meaning
+
+Let's check what is the meaning and correlation between num_window and new_window variables. 
+
+In many columns, there are aggregates like avg, std, var, etc. of the movements within the window. It seems, those aggregates are stored in the rows where new_window == "yes".
+
+Let's check it.
+
+```{r window1, include = TRUE}
+train_set[1:25, c(2, 6, 7, 160)]
+```
+
+Let's subtract only the observations where the new_window == 'yes'  and check whether there are values in the aggregates 'max_roll_belt' and 'kurtosis_picth_belt'.
+
+```{r window2, include = TRUE}
+new_wndw <- which(train_set$new_window == "yes") 
+max_r_b <- which(!is.na(train_set$max_roll_belt)) 
+kurt_p_b <- which(train_set$kurtosis_picth_belt != "")
+```
+
+Let's do a formal test (the rows with new_window == yes are correspond to the filled rows in max_roll_belt and kurtosis_picth_belt. 
+
+```{r window3, include = TRUE}
+summary(new_wndw - max_r_b)
+summary(new_wndw - kurt_p_b)
+
+train_set %>%
+##    filter(new_window == "yes") %>%
+    filter(new_window == "no") %>%
+    group_by(user_name) %>%
+    summarise(
+        cnt = n(),
+        filledIn = sum(!is.na(max_roll_belt))
+        ) %>%
+    View
+```
+
+The aggregates are placed at the end of the window, in the rows where new_window == 'yes'.
+
+Let's check whether the target variable can be changed within one window.
+
+```{r window4, include = TRUE}
+spread_df <- train_set %>%
+  count(classe, num_window) %>% 
+  spread(classe, n, fill = 0)
+
+spread_df$sum <- rowSums(spread_df[, -1])
+
+View(spread_df)
+spread_df$dif <- 0
+for(i in 1:nrow(spread_df)) {
+    if (spread_df[i, 2] != 0) {
+      spread_df$dif[i] <- spread_df[i, 2] - spread_df[i, 7]
+      } else if (spread_df[i, 3] != 0) {
+          spread_df$dif[i] <- spread_df[i, 3] - spread_df[i, 7]
+          } else if (spread_df[i, 4] != 0) {
+              spread_df$dif[i] <- spread_df[i, 4] - spread_df[i, 7]
+          } else if (spread_df[i, 5] != 0) {
+              spread_df$dif[i] <- spread_df[i, 5] - spread_df[i, 7]
+          } else if (spread_df[i, 6] != 0) {
+              spread_df$dif[i] <- spread_df[i, 6] - spread_df[i, 7]
+                      } else {
+                          spread_df$dif <- NULL
+                      }
+}
+summary(unlist(spread_df$dif))
+```
+
+The target variable is the same within one window.
+
+Let's check how many observations and windows are collected per each user and how many observations are collected per each window.
+
+```{r window5, include = TRUE}
+train_set %>%
+    group_by(user_name) %>%
+    summarise(
+        cnt = n(), 
+        cnt_wndw = length(unique(num_window))
+        ) %>%
+    View
+
+wind_stat <- train_set %>%
+    group_by(user_name, num_window) %>%
+    summarise(
+        cnt = n()
+        )
+summary(wind_stat)
+ggplot(data = wind_stat, aes(x = user_name, y = cnt, fill = user_name)) + 
+  geom_violin()
+
+```
+
+SUMMARY:
+
+1. The aggregates are placed at the end of the window, in the rows where new_window == 'yes'.
+
+2. There are about 23 observation in each window.
+
+3. Within one window only one class be observed. So it means, if one observation from the window is used for testing and all other observations from the same window are used for the training, the variable num_window should be a good predictor. For the fair validation strategy, we have to place to a test set all observations from one or several windows, so there will be no leakage. But for the project purposes, we should inspect the 'hidden' test set and check whether the observations in it are picked from one window and this window is excluded from the train set.
+
+## Test set inspection
+
+We are not going to look at the target but we would like to check the distribution of users and windows in the test set.  
+
+```{r test set, include = TRUE}
+test_set %>%
+    group_by(num_window) %>%
+    summarise(cnt = n())
+```
+
+SUMMARY:
+
+1. In the test set, each observation corresponds to a unique window.
+
+2. For the project purposes, we need to simulate similar validation strategy as proposed by authors. So, we refuse from the fair strategy and randomly pick observations for my_test_set.   
+
+## Distribution of target variable
+
+Finally, in order to choose an appropriate model type and validation strategy, we need to figure out whether we have a balanced or imbalanced dataset.
+
+```{r dist of target, include = TRUE}
+ggplot(data = train_set, aes(x = classe, fill = user_name)) +
+    geom_bar(aes(y = ..count../sum(..count..)))
+```
+
+SUMMARY:
+
+1. The target variable can be considered as a balanced one.There is no need to generate new data to get a more balanced dataset.
+
+## Sorting of the observations
+
+Let's check the sorting of observations.
+
+```{r sorting, include = TRUE}
+ggplot(data = train_set, aes(x = X, y = classe, color = classe)) + ## by classe
+  geom_point()
+
+ggplot(data = train_set, aes(x = X, y = user_name, color = classe)) + ## by user_name
+  geom_point()  
+
+ggplot(data = train_set, aes(x = X, y = num_window, color = classe)) + ## by num_window
+  geom_point()  
+
+
+ggplot(data = train_set, aes(x = X, y = num_window, color = classe)) + ## by num_window и user_name
+  geom_point(alpha = 0.5, size = 0.8) +
+    facet_grid(user_name ~ .)
+
+ggplot(data = train_set, aes(x = X, y = raw_timestamp_part_1, color = user_name)) + ## by raw_timestamp_part_1
+  geom_point()
+
+ggplot(data = train_set, aes(x = X, y = cvtd_timestamp, color = classe)) + ## by cvtd_timestamp
+  geom_point(alpha = 0.5, size = 0.8) +
+    facet_grid(. ~ user_name)
+
+ggplot(data = train_set, aes(x = num_window, y = cvtd_timestamp, color = classe)) + ## num_window by cvtd_timestamp
+  geom_point(alpha = 0.5, size = 0.8) +
+    facet_grid(user_name ~ .)
+```
+  
+SUMMARY:
+
+1. Each user was performing the exercises in the same order (A -> B -> C -> D -> E).
+
+2. Each user performed the exercises in a very short period of time, so the timestamps for different users do not overlap each other.
+
+3. These two findings (the way of dataset preparation) can lead to leakage in predictions. So, there is a need to exclude timestamp from the training dataset.
+
+4. The observations are clearly sorted by a target variable. For the training there is a need to exclude the X variable which indicates the number of observation (row in the dataset).
+
+## Variable correlation 
+
+Let's see the correlation between all columns (except the aggregates).
+
+```{r corr, include = TRUE}
+trunc_train_set <- train_set[, c(1:11, 37:49, 60:68, 84:86, 102, 113:124, 140, 151:160)] ## subtract the factor variables (which are mostly the aggregates) 
+
+str(trunc_train_set)
+cor_train <- cor(trunc_train_set[, sapply(trunc_train_set, is.numeric)], use = "complete.obs")
+melted_cor_train <- melt(cor_train)
+
+ggplot(data = melted_cor_train, aes(x=Var1, y=Var2, fill=value)) + 
+  geom_tile() +
+    scale_fill_gradient2(low = "blue", high = "red", mid = "white") +
+    theme(axis.text.x = element_text(angle = 90, hjust = 1))
+```
+
