@@ -2,7 +2,7 @@
 
 1. Project Write Up - https://elenakush.github.io/Practical-ML-Course-/Prediction.html. 
 
-2. Repo on GitHub with .Rmd and .html files - https://github.com/ElenaKush/Practical-ML-Course-
+2. Repo on GitHub with .Rmd and .html files - https://github.com/ElenaKush/Practical-ML-Course-/
 
 3. Detailed EDA for the Assignment on the https://elenakush.github.io/Practical-ML-Course-/EDA.html
 
