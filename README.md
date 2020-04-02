@@ -1,10 +1,12 @@
 # Practical-ML-Course
 
-Project Write Up - https://elenakush.github.io/Practical-ML-Course-/Prediction.html. 
+1. Project Write Up - https://elenakush.github.io/Practical-ML-Course-/Prediction.html. 
 
-Detailed EDA for the Assignment on the https://elenakush.github.io/Practical-ML-Course-/EDA.html
+2. Repo on GitHub with .Rmd and .html files - https://github.com/ElenaKush/Practical-ML-Course-
 
-Repo on GitHub with .Rmd files - https://github.com/ElenaKush/Practical-ML-Course-
+3. Detailed EDA for the Assignment on the https://elenakush.github.io/Practical-ML-Course-/EDA.html
+
+
 
 
 In this project, our goal was to predict the manner in which 6 people did the barbell lifts.
